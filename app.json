@@ -1,0 +1,25 @@
+{
+    "expo": {
+        "name": "Elevate",
+        "slug": "elevate",
+        "version": "1.0.0",
+        "orientation": "portrait",
+        "scheme": "elevate",
+        "userInterfaceStyle": "automatic",
+        "newArchEnabled": true,
+        "web": {
+            "bundler": "metro",
+            "output": "single",
+            "favicon": "./assets/favicon.png"
+        },
+        "plugins": [
+            "expo-router",
+            [
+                "expo-camera",
+                {
+                    "cameraPermission": "Allow Fitbit to access your camera to scan food barcodes."
+                }
+            ]
+        ]
+    }
+}
