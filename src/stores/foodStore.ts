@@ -3,6 +3,9 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FoodEntry, DailyGoals, SavedMeal, UserStats } from '../types';
 import { supabase } from '../lib/supabase';
+import { RealtimeChannel } from '@supabase/supabase-js';
+
+let realtimeChannel: RealtimeChannel | null = null;
 
 interface FoodState {
     entries: FoodEntry[];
@@ -23,6 +26,8 @@ interface FoodState {
     setSkipAuth: (skip: boolean) => void;
     clearAllData: () => void;
     fetchCloudData: () => Promise<void>;
+    subscribeToRealtime: () => Promise<void>;
+    unsubscribeFromRealtime: () => Promise<void>;
 }
 
 const defaultGoals: DailyGoals = {
@@ -193,6 +198,103 @@ export const useFoodStore = create<FoodState>()(
 
                     return newState;
                 });
+            },
+
+            subscribeToRealtime: async () => {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session?.user) return;
+
+                // Tear down any existing channel first
+                if (realtimeChannel) {
+                    await supabase.removeChannel(realtimeChannel);
+                    realtimeChannel = null;
+                }
+
+                const userId = session.user.id;
+
+                realtimeChannel = supabase
+                    .channel(`realtime:user:${userId}`)
+                    // --- entries ---
+                    .on(
+                        'postgres_changes',
+                        { event: 'INSERT', schema: 'public', table: 'entries', filter: `user_id=eq.${userId}` },
+                        (payload) => {
+                            const e = payload.new as any;
+                            const newEntry: FoodEntry = {
+                                id: e.id,
+                                name: e.name,
+                                calories: e.calories,
+                                protein: e.protein,
+                                carbs: e.carbs,
+                                fat: e.fat,
+                                fiber: 0,
+                                sugar: 0,
+                                sodium: 0,
+                                timestamp: new Date(e.timestamp).getTime(),
+                                mealType: e.category,
+                            };
+                            set((state) => ({
+                                // Avoid duplicates (local optimistic update may have already added it)
+                                entries: state.entries.some(en => en.id === newEntry.id)
+                                    ? state.entries
+                                    : [...state.entries, newEntry],
+                            }));
+                        }
+                    )
+                    .on(
+                        'postgres_changes',
+                        { event: 'DELETE', schema: 'public', table: 'entries', filter: `user_id=eq.${userId}` },
+                        (payload) => {
+                            const deletedId = (payload.old as any).id;
+                            set((state) => ({
+                                entries: state.entries.filter(e => e.id !== deletedId),
+                            }));
+                        }
+                    )
+                    // --- goals ---
+                    .on(
+                        'postgres_changes',
+                        { event: '*', schema: 'public', table: 'goals', filter: `user_id=eq.${userId}` },
+                        (payload) => {
+                            const g = payload.new as any;
+                            if (!g) return;
+                            set({
+                                goals: {
+                                    calories: g.calories,
+                                    protein: g.protein,
+                                    carbs: g.carbs,
+                                    fat: g.fat,
+                                },
+                            });
+                        }
+                    )
+                    // --- user_stats ---
+                    .on(
+                        'postgres_changes',
+                        { event: '*', schema: 'public', table: 'user_stats', filter: `user_id=eq.${userId}` },
+                        (payload) => {
+                            const s = payload.new as any;
+                            if (!s) return;
+                            set({
+                                userStats: {
+                                    gender: s.gender,
+                                    age: s.age,
+                                    weight: s.weight,
+                                    height: s.height,
+                                    activityLevel: s.activity_level,
+                                    goal: s.goal,
+                                },
+                            });
+                        }
+                    )
+                    .subscribe();
+            },
+
+            unsubscribeFromRealtime: async () => {
+                if (realtimeChannel) {
+                    await supabase.removeChannel(realtimeChannel);
+                    realtimeChannel = null;
+                }
             },
         }),
         {

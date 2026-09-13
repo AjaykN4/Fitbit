@@ -14,17 +14,32 @@ export default function RootLayout() {
     const rootNavigationState = useRootNavigationState();
     const fetchCloudData = useFoodStore(state => state.fetchCloudData);
     const skipAuth = useFoodStore(state => state.skipAuth);
+    const subscribeToRealtime = useFoodStore(state => state.subscribeToRealtime);
+    const unsubscribeFromRealtime = useFoodStore(state => state.unsubscribeFromRealtime);
 
     useEffect(() => {
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
-            if (session) fetchCloudData();
+            if (session) {
+                fetchCloudData();
+                subscribeToRealtime();
+            }
         });
 
-        supabase.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             setSession(session);
-            if (session) fetchCloudData();
+            if (session) {
+                fetchCloudData();
+                subscribeToRealtime();
+            } else {
+                unsubscribeFromRealtime();
+            }
         });
+
+        return () => {
+            subscription.unsubscribe();
+            unsubscribeFromRealtime();
+        };
     }, []);
 
     useEffect(() => {
